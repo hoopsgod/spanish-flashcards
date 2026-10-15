@@ -590,7 +590,7 @@ function calculateNextInterval(card, grade) {
        } else if (grade === 'easy') {
            ease += 0.15;
            if (step < 2) {
-               interval = GRADUATED_BASE * ease;
+               interval = GRADUATED_BASE;
                step = 2;
            } else {
                interval = (interval * ease) * 1.3;
