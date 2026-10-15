@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spaced Repetition Flashcards</title>
+    <link rel="icon" href="data:," />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        .perspective-1000 {
+            perspective: 1000px;
+        }
+
+
+        .flip-card-inner {
+            transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+            transform-style: preserve-3d;
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .flip-card.flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .flip-card-front, .flip-card-back {
+            backface-visibility: hidden;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 1rem;
+            padding: 2rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .flip-card-front {
+            background-color: white;
+            z-index: 2;
+        }
+
+        .flip-card-back {
+            background-color: #f8fafc;
+            transform: rotateY(180deg);
+            border: 2px solid #e2e8f0;
+        }
+
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+        }
+
+        /* Fallbacks mirroring the Tailwind utilities the markup relies on,
+           so show/hide state and card geometry hold even before the CDN
+           stylesheet arrives. */
+        .hidden {
+            display: none !important;
+        }
+
+        #flashcard-container, #end-of-deck-msg {
+            aspect-ratio: 4 / 3;
+        }
+
+        @keyframes mic-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }
+            70% { box-shadow: 0 0 0 16px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+
+        .mic-listening {
+            animation: mic-pulse 1.2s ease-out infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col p-4 md:p-8">
+
+   <header class="mb-6 text-center relative">
+       <h1 class="text-3xl font-bold text-slate-800 mb-2"><i class="fa-solid fa-brain text-indigo-600 mr-2"></i>Spaced Retrieval Practice</h1>
+       <p class="text-slate-600 max-w-2xl mx-auto text-sm md:text-base">Master vocabulary by reviewing words right before you forget them. Choose your preferred study mode below.</p>
+
+       <div class="mt-4 md:mt-0 md:absolute md:top-0 md:right-0 flex justify-center gap-2">
+           <button id="open-teacher-btn" class="text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg shadow-sm transition-colors flex items-center">
+               <i class="fa-solid fa-chalkboard-user mr-2 text-indigo-600"></i> Teacher
+           </button>
+           <button id="open-add-modal-btn" class="text-sm bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg shadow transition-colors flex items-center">
+               <i class="fa-solid fa-plus mr-2"></i> Add Words
+           </button>
+       </div>
+   </header>
+
+   <main id="study-main" class="flex-grow flex flex-col lg:flex-row gap-8 max-w-6xl mx-auto w-full">
+
+        <div class="flex-1 flex flex-col items-center">
+
+            <div id="assignment-banner" class="hidden w-full max-w-md bg-indigo-600 text-white rounded-2xl shadow-md p-4 mb-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-200 flex items-center gap-1.5"><i class="fa-solid fa-clipboard-list"></i> Class assignment</p>
+                        <h3 id="assign-banner-title" class="font-bold text-lg leading-snug">Assignment</h3>
+                        <p id="assign-banner-due" class="text-sm text-indigo-100"></p>
+                    </div>
+                    <button id="assign-banner-dismiss" class="text-indigo-200 hover:text-white transition-colors p-1 shrink-0" title="Hide assignment"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="mt-3">
+                    <div class="flex justify-between text-xs font-medium text-indigo-100 mb-1"><span id="assign-banner-progress-text">0 of 0 words reviewed</span><span id="assign-banner-mastered-text"></span></div>
+                    <div class="w-full h-2 bg-indigo-900/50 rounded-full overflow-hidden"><div id="assign-banner-bar" class="h-full bg-emerald-400 rounded-full transition-all" style="width:0%"></div></div>
+                </div>
+                <button id="assign-practice-btn" class="mt-3 w-full py-2.5 bg-white text-indigo-700 font-bold text-sm rounded-xl shadow hover:bg-indigo-50 transition-colors"><i class="fa-solid fa-play mr-1.5"></i>Practice assignment words</button>
+                <p id="assign-banner-done" class="hidden mt-3 text-sm font-semibold text-emerald-200 items-center gap-1.5"><i class="fa-solid fa-circle-check"></i>Every assignment word reviewed — nice work!</p>
+            </div>
+
+            <div class="w-full max-w-md flex flex-wrap justify-between items-center bg-white p-2.5 rounded-2xl shadow-sm border border-slate-200 mb-4 gap-2">
+                <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                    <button id="mode-flip-btn" class="px-3 py-1.5 rounded-lg bg-white text-indigo-600 shadow-xs transition-all flex items-center gap-1.5">
+                        <i class="fa-solid fa-address-card"></i> Flip
+                    </button>
+
+                 <button id="mode-type-btn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5">
+                     <i class="fa-solid fa-keyboard"></i> Type
+                 </button>
+                 <button id="mode-speak-btn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5">
+                     <i class="fa-solid fa-microphone"></i> Speak
+                 </button>
+             </div>
+
+              <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                 <button id="dir-enes-btn" class="px-3 py-1.5 rounded-lg bg-white text-indigo-600 shadow-xs transition-all">
+                     EN <i class="fa-solid fa-arrow-right text-[10px] mx-0.5"></i> ES
+                 </button>
+                 <button id="dir-esen-btn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                     ES <i class="fa-solid fa-arrow-right text-[10px] mx-0.5"></i> EN
+                 </button>
+             </div>
+        </div>
+        <div class="w-full max-w-md flex justify-between items-center mb-3 px-2">
+            <span id="deck-status" class="text-sm font-medium text-slate-500 bg-slate-200 px-3 py-1 rounded-full">Loading deck...</span>
+            <button id="reset-btn" class="text-xs text-slate-500 hover:text-red-500 transition-colors flex items-center">
+                <i class="fa-solid fa-rotate-left mr-1"></i>Reset Progress
+            </button>
+        </div>
+        <div id="flashcard-container" class="w-full max-w-md aspect-[4/3] perspective-1000 mb-6 hidden">
+            <div id="flashcard" class="flip-card w-full h-full cursor-pointer relative">
+                <div class="flip-card-inner">
+                    <div class="flip-card-front">
+                        <span id="card-prompt-label" class="text-xs font-semibold tracking-wider text-indigo-500 uppercase mb-2">Translate to Spanish</span>
+                        <div class="flex items-center justify-center gap-3 mb-2">
+                            <h2 id="card-prompt" class="text-3xl md:text-4xl font-bold text-slate-800 text-center">...</h2>
+                            <button id="prompt-speak-btn" class="text-slate-400 hover:text-indigo-600 transition-colors p-2 rounded-full hidden" title="Listen to prompt">
+                                <i class="fa-solid fa-volume-high text-xl"></i>
+                            </button>
+                        </div>
+                        <div id="typing-input-wrapper" class="w-full max-w-xs my-3 hidden" onclick="event.stopPropagation()">
+                            <div class="relative flex items-center">
+                                <input type="text" id="typing-input" autocomplete="off" placeholder="Type answer here..." class="w-full px-4 py-2.5 pr-10 border-2 border-slate-300 rounded-xl focus:border-indigo-500 focus:outline-none text-center font-medium text-slate-800 transition-all text-base shadow-inner">
+                                <button id="typing-submit-btn" class="absolute right-2 p-1 text-indigo-600 hover:text-indigo-800 transition-colors">
+                                    <i class="fa-solid fa-circle-arrow-right text-2xl"></i>
+                                </button>
+                            </div>
+                            <p class="text-[11px] text-slate-400 text-center mt-1.5"><i class="fa-solid fa-turn-down fa-rotate-90 mr-1"></i>Press Enter to check</p>
+                        </div>
+                        <p id="card-tap-hint" class="text-slate-400 text-xs mt-auto"><i class="fa-solid fa-hand-pointer mr-1"></i>Tap to reveal</p>
+                    </div>
+                     <div class="flip-card-back">
+                         <div id="typing-feedback-badge" class="mb-2 hidden"></div>
+                        <span class="text-xs font-semibold tracking-wider text-emerald-500 uppercase mb-1">Answer</span>
+                        <div class="flex items-center justify-center gap-3 mb-3">
+
+                            <h2 id="card-answer" class="text-4xl md:text-5xl font-bold text-slate-800 text-center">...</h2>
+                            <button id="answer-speak-btn" class="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors p-2.5 rounded-full flex items-center justify-center border border-transparent hover:border-indigo-100" title="Listen to pronunciation">
+                                <i class="fa-solid fa-volume-high text-2xl"></i>
+                            </button>
+                        </div>
+                        <div id="typing-comparison" class="text-xs text-slate-500 mb-3 hidden bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                            You typed: <span id="user-typed-text" class="font-semibold text-slate-800"></span>
+                        </div>
+                        <div id="card-context" class="text-slate-600 italic text-center mb-auto text-base hidden"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="end-of-deck-msg" class="w-full max-w-md aspect-[4/3] bg-white rounded-2xl shadow-lg flex flex-col items-center justify-center p-8 mb-6 hidden border-2 border-dashed border-slate-300">
+            <i class="fa-solid fa-check-circle text-6xl text-emerald-500 mb-4"></i>
+            <h3 class="text-2xl font-bold text-slate-800 mb-2">You're all caught up!</h3>
+            <p class="text-slate-500 text-center mb-6 text-sm">No more cards due right now. The algorithm will schedule your next reviews.</p>
+            <button id="review-ahead-btn" class="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors shadow-md hidden">
+                Review Ahead Anyway
+            </button>
+        </div>
+        <div id="controls-container" class="w-full max-w-md flex flex-col gap-3">
+            <div id="speak-panel" class="hidden w-full bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-col items-center gap-3">
+                <button id="mic-btn" class="w-16 h-16 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg transition-all transform active:scale-95" title="Tap, then say the word in Spanish">
+                    <i class="fa-solid fa-microphone text-2xl"></i>
+                </button>
+                <p id="speak-status" class="text-sm text-slate-600 text-center font-medium">Tap the mic and say the word in Spanish.</p>
+                <p id="speak-heard" class="hidden text-sm text-slate-500 text-center">You said: <span id="speak-heard-text" class="font-semibold text-slate-800"></span></p>
+                <div id="speak-verdict" class="hidden"></div>
+                <div class="flex items-center gap-5">
+                    <button id="speak-listen-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 transition-colors"><i class="fa-solid fa-volume-high"></i>Hear it first</button>
+                    <button id="speak-reveal-btn" class="text-sm text-slate-500 hover:text-slate-700 font-medium flex items-center gap-1.5 transition-colors"><i class="fa-solid fa-eye"></i>Show answer</button>
+                </div>
+                <p id="speak-unsupported" class="hidden text-xs text-red-600 text-center font-medium"></p>
+            </div>
+            <button id="reveal-btn" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-base font-bold rounded-xl shadow-lg transition-all transform active:scale-95 hidden">
+                Show Answer
+            </button>
+            <div id="grading-buttons" class="grid grid-cols-3 gap-3 hidden">
+                <button data-grade="hard" class="grade-btn flex flex-col items-center py-3 px-2 bg-red-100 hover:bg-red-200 border-2 border-red-200 hover:border-red-300 rounded-xl transition-colors">
+                    <span class="font-bold text-red-700 mb-0.5 text-sm">Hard</span>
+                    <span class="text-[11px] text-red-600 font-medium interval-preview">Soon</span>
+                </button>
+                <button data-grade="good" class="grade-btn flex flex-col items-center py-3 px-2 bg-amber-100 hover:bg-amber-200 border-2 border-amber-200 hover:border-amber-300 rounded-xl transition-colors">
+                    <span class="font-bold text-amber-700 mb-0.5 text-sm">Good</span>
+                    <span class="text-[11px] text-amber-600 font-medium interval-preview">Later</span>
+                </button>
+                <button data-grade="easy" class="grade-btn flex flex-col items-center py-3 px-2 bg-emerald-100 hover:bg-emerald-200 border-2 border-emerald-200 hover:border-emerald-300 rounded-xl transition-colors">
+                    <span class="font-bold text-emerald-700 mb-0.5 text-sm">Easy</span>
+                    <span class="text-[11px] text-emerald-600 font-medium interval-preview">Much Later</span>
+                </button>
+            </div>
+        </div>
+    </div>
+   <div class="lg:w-80 w-full flex flex-col gap-6">
+       <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+           <h3 class="text-base font-bold text-slate-800 mb-3 border-b pb-2">Session Stats</h3>
+           <div class="grid grid-cols-2 gap-4">
+               <div class="flex flex-col">
+
+                      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cards Due</span>
+                      <span id="stat-due" class="text-2xl font-bold text-indigo-600">0</span>
+                  </div>
+                  <div class="flex flex-col">
+                      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reviewed</span>
+                      <span id="stat-reviewed" class="text-2xl font-bold text-emerald-600">0</span>
+                  </div>
+              </div>
+              <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <span class="text-xs text-slate-500 truncate">Studying as <span id="student-name-display" class="font-semibold text-slate-700">…</span></span>
+                  <button id="edit-name-btn" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 shrink-0"><i class="fa-solid fa-pen"></i> Edit name</button>
+              </div>
+          </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-grow flex flex-col h-full max-h-[480px]">
+            <div class="p-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="font-bold text-slate-800 text-sm">Algorithm Status</h3>
+                <p class="text-xs text-slate-500 mt-0.5">Watch intervals grow as you succeed.</p>
+            </div>
+            <div class="overflow-y-auto flex-grow p-0">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-slate-50 sticky top-0 border-b border-slate-200">
+                        <tr>
+                            <th class="py-2 px-4 font-semibold text-slate-600 text-xs">Word</th>
+                            <th class="py-2 px-4 font-semibold text-slate-600 text-right text-xs">Interval</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vocab-table-body" class="divide-y divide-slate-100">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+<div id="add-modal" class="fixed inset-0 modal-overlay z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="p-5 flex justify-between items-center bg-slate-50">
+            <h3 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-file-pen text-indigo-600 mr-2"></i>Add New Vocabulary</h3>
+            <button id="close-modal-btn" class="text-slate-400 hover:text-slate-600 transition-colors">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+        </div>
+        <div class="flex border-b border-slate-200 bg-slate-50 px-6">
+            <button id="tab-single" class="px-4 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 outline-none transition-colors">Single Word</button>
+            <button id="tab-bulk" class="px-4 py-3 text-sm font-medium text-slate-500 hover:text-indigo-600 border-b-2 border-transparent outline-none transition-colors">Bulk Import</button>
+        </div>
+        <div class="p-6 overflow-y-auto">
+            <form id="add-word-form" class="space-y-4">
+                <div>
+                    <label for="new-spanish" class="block text-sm font-medium text-slate-700 mb-1">Target Word (Spanish) *</label>
+                    <input type="text" id="new-spanish" required placeholder="e.g., la biblioteca" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                </div>
+                <div>
+                    <label for="new-english" class="block text-sm font-medium text-slate-700 mb-1">Definition (English) *</label>
+                    <input type="text" id="new-english" required placeholder="e.g., the library" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+
+                </div>
+                <div>
+                    <label for="new-context" class="block text-sm font-medium text-slate-700 mb-1">Context Sentence (Optional)</label>
+                    <input type="text" id="new-context" placeholder="e.g., Yo estudio en la biblioteca." class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                </div>
+                <div class="pt-4 flex justify-end gap-3">
+                    <button type="button" id="cancel-modal-btn" class="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium transition-colors">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm">Add Word</button>
+                </div>
+            </form>
+            <form id="bulk-word-form" class="space-y-4 hidden">
+                <div>
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        <label for="bulk-input" class="block text-sm font-medium text-slate-700">Paste vocabulary list from Excel / Sheets</label>
+                        <button type="button" id="bulk-file-btn" class="shrink-0 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1.5"><i class="fa-solid fa-file-arrow-up text-indigo-600"></i>Upload file</button>
+                        <input type="file" id="bulk-file-input" accept=".csv,.tsv,.txt" class="hidden">
+                    </div>
+                    <textarea id="bulk-input" required rows="6" placeholder="el perro, the dog, El perro ladra.&#10;la gata, the cat" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono text-xs"></textarea>
+                    <p class="text-xs text-slate-500 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>Format: <b>Spanish, English, Context (optional)</b>. Tab or comma separated.</p>
+                </div>
+                <div class="pt-4 flex justify-end gap-3">
+                    <button type="button" id="cancel-bulk-btn" class="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium transition-colors">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm">Import Words</button>
+                </div>
+            </form>
+            <div id="add-status-msg" class="mt-4 text-sm font-medium text-emerald-600 hidden flex items-center justify-center">
+                <i class="fa-solid fa-circle-check mr-2"></i> <span id="status-text">Word added successfully!</span>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="teacher-dashboard" class="hidden flex-grow flex-col gap-6 max-w-6xl mx-auto w-full">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-2xl font-bold text-slate-800"><i class="fa-solid fa-chart-column text-indigo-600 mr-2"></i>Class Progress</h2>
+        <div class="flex flex-wrap gap-2">
+            <button id="dash-refresh-btn" class="text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg shadow-sm transition-colors flex items-center"><i class="fa-solid fa-rotate mr-2"></i>Refresh</button>
+            <button id="dash-back-btn" class="text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg shadow-sm transition-colors flex items-center"><i class="fa-solid fa-arrow-left mr-2"></i>Back to study</button>
+            <button id="dash-signout-btn" class="text-sm bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg shadow transition-colors flex items-center"><i class="fa-solid fa-right-from-bracket mr-2"></i>Sign out</button>
+        </div>
+    </div>
+    <p id="dash-status" class="text-xs text-slate-400 -mt-4"></p>
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <h3 class="text-base font-bold text-slate-800 mb-1 flex items-center gap-2"><i class="fa-solid fa-clipboard-list text-indigo-600"></i>Class Assignment</h3>
+        <p class="text-xs text-slate-500 mb-4">Build a word list with a due date, then share the link with your class — opening it loads the words straight into each student's deck, with the due date and their progress shown in the app.</p>
+        <div id="assign-create-wrap">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                    <label for="assign-title" class="block text-sm font-medium text-slate-700 mb-1">Assignment title</label>
+                    <input type="text" id="assign-title" maxlength="80" placeholder="e.g., Unit 4 — La ciudad" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                </div>
+                <div>
+                    <label for="assign-due" class="block text-sm font-medium text-slate-700 mb-1">Due date</label>
+                    <input type="date" id="assign-due" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                </div>
+            </div>
+            <div>
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <label for="assign-words" class="block text-sm font-medium text-slate-700">Words — one per line</label>
+                    <button type="button" id="assign-file-btn" class="shrink-0 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1.5"><i class="fa-solid fa-file-arrow-up text-indigo-600"></i>Upload file</button>
+                    <input type="file" id="assign-file-input" accept=".csv,.tsv,.txt" class="hidden">
+                </div>
+                <textarea id="assign-words" rows="6" placeholder="el ayuntamiento, City Hall, El alcalde trabaja en el ayuntamiento.&#10;el rascacielos, Skyscraper" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono text-xs"></textarea>
+                <p class="text-xs text-slate-500 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>Format: <b>Spanish, English, Context sentence (optional)</b>. Tab or comma separated — paste straight from Excel or Sheets.</p>
+                <p id="assign-file-msg" class="hidden text-sm font-medium text-emerald-600 mt-2 flex items-center gap-1.5"><i class="fa-solid fa-circle-check"></i><span id="assign-file-msg-text"></span></p>
+            </div>
+            <p id="assign-create-error" class="hidden text-sm font-medium text-red-600 mt-3"></p>
+            <button id="assign-create-btn" class="mt-4 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm flex items-center gap-2"><i class="fa-solid fa-link"></i>Create assignment &amp; get share link</button>
+        </div>
+        <div id="assign-active-wrap" class="hidden">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div>
+                    <p id="assign-active-title" class="font-bold text-slate-800"></p>
+                    <p id="assign-active-meta" class="text-xs text-slate-500"></p>
+                </div>
+                <span id="assign-active-count" class="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full"></span>
+            </div>
+            <label for="assign-link-input" class="block text-sm font-medium text-slate-700 mb-1">Share this link with your students</label>
+            <div class="flex gap-2">
+                <input type="text" id="assign-link-input" readonly class="flex-1 min-w-0 px-4 py-2 border border-slate-300 rounded-lg bg-slate-50 text-sm text-slate-600 outline-none">
+                <button id="assign-copy-btn" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium transition-colors shadow-sm text-sm flex items-center gap-2 shrink-0"><i class="fa-solid fa-copy"></i>Copy</button>
+            </div>
+            <p id="assign-copy-msg" class="hidden text-xs font-medium text-emerald-600 mt-2"></p>
+            <p class="text-xs text-slate-500 mt-3">Students who open the link get these words added to their deck (words they already have keep their progress), a due-date banner, and a “Practice assignment words” button. Creating a new assignment replaces this one.</p>
+            <div class="flex flex-wrap gap-2 mt-4">
+                <button id="assign-preview-btn" class="text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg shadow-sm transition-colors flex items-center gap-2"><i class="fa-solid fa-eye text-indigo-600"></i>Preview as student</button>
+                <button id="assign-new-btn" class="text-sm bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg shadow-sm transition-colors flex items-center gap-2"><i class="fa-solid fa-plus text-indigo-600"></i>New assignment</button>
+                <button id="assign-delete-btn" class="text-sm bg-white hover:bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-lg shadow-sm transition-colors flex items-center gap-2"><i class="fa-solid fa-trash"></i>Delete</button>
+            </div>
+        </div>
+    </div>
+    <div id="dash-empty" class="hidden bg-white rounded-2xl shadow-sm border-2 border-dashed border-slate-300 p-10 text-center">
+        <i class="fa-solid fa-users text-4xl text-slate-300 mb-3"></i>
+        <p class="text-slate-600 font-medium">No student data yet — share the study link with your class.</p>
+    </div>
+    <div id="dash-content" class="hidden flex-col gap-6">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Students</span>
+                <div id="dash-stat-students" class="text-3xl font-bold text-indigo-600 mt-1">0</div>
+            </div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reviews this week</span>
+                <div id="dash-stat-week" class="text-3xl font-bold text-emerald-600 mt-1">0</div>
+                <p class="text-[11px] text-slate-400 mt-1">Reviews by students active in the last 7 days</p>
+            </div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Class accuracy</span>
+                <div id="dash-stat-accuracy" class="text-3xl font-bold text-slate-800 mt-1">—</div>
+                <p class="text-[11px] text-slate-400 mt-1">Share of reviews graded Good or Easy</p>
+            </div>
+        </div>
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <h3 class="text-base font-bold text-slate-800 mb-3 border-b pb-2">Words the class struggles with most</h3>
+            <div id="dash-struggled" class="divide-y divide-slate-100"></div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="font-bold text-slate-800 text-sm">Students</h3>
+                <p class="text-xs text-slate-500 mt-0.5">Tap a column heading to sort.</p>
+            </div>
+            <table class="w-full text-left text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                        <th data-sort="display_name" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none">Name</th>
+                        <th data-sort="last_active" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none">Last active</th>
+                        <th data-sort="total_reviews" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right">Reviews</th>
+                        <th data-sort="reviews_hard" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right hidden md:table-cell">Hard</th>
+                        <th data-sort="reviews_good" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right hidden md:table-cell">Good</th>
+                        <th data-sort="reviews_easy" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right hidden md:table-cell">Easy</th>
+                        <th data-sort="words_mastered" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right">Mastered</th>
+                        <th data-sort="words_learning" class="dash-sort py-2 px-4 font-semibold text-slate-600 text-xs cursor-pointer select-none text-right">Learning</th>
+                    </tr>
+                </thead>
+                <tbody id="dash-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<div id="name-overlay" class="fixed inset-0 modal-overlay z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div class="p-6">
+            <div class="flex justify-between items-start">
+                <h3 class="text-xl font-bold text-slate-800"><i class="fa-solid fa-hand text-indigo-600 mr-2"></i>¡Hola!</h3>
+                <button id="close-name-overlay-btn" class="text-slate-400 hover:text-slate-600 transition-colors hidden"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <p class="text-sm text-slate-600 mt-1 mb-4">What is your name? Your teacher uses it to follow your study progress.</p>
+            <form id="name-form" class="space-y-4">
+                <input type="text" id="student-name-input" required maxlength="60" placeholder="Your name" class="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+                <button type="submit" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm">Start studying</button>
+            </form>
+            <p class="text-center text-sm text-slate-500 mt-4">Not a student? <button type="button" id="name-overlay-teacher-link" class="text-indigo-600 font-medium hover:underline">Teacher sign-in</button></p>
+        </div>
+    </div>
+</div>
+<div id="teacher-modal" class="fixed inset-0 modal-overlay z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div class="p-5 flex justify-between items-center bg-slate-50">
+            <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-chalkboard-user text-indigo-600 mr-2"></i><span id="teacher-modal-title">Teacher Sign-In</span></h3>
+            <button id="close-teacher-modal-btn" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <form id="teacher-signin-form" class="p-6 space-y-4">
+            <div>
+                <label for="teacher-email" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <input type="email" id="teacher-email" required autocomplete="email" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+            </div>
+            <div>
+                <label for="teacher-password" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <input type="password" id="teacher-password" required autocomplete="current-password" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+            </div>
+            <p id="teacher-auth-error" class="hidden text-sm font-medium text-red-600"></p>
+            <button type="submit" id="teacher-signin-btn" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm">Sign in</button>
+            <p id="teacher-auth-info" class="hidden text-sm font-medium text-emerald-600"></p>
+            <button type="button" id="forgot-password-btn" class="w-full text-sm text-indigo-600 hover:text-indigo-800 hover:underline py-1">First time, or forgot your password? Email me a link to set it</button>
+            <div class="text-center">
+                <button type="button" id="reset-help-toggle" class="text-xs text-slate-400 hover:text-slate-600 hover:underline">The email link didn't bring up a password form?</button>
+            </div>
+            <div id="reset-link-help" class="hidden border-t border-slate-200 pt-4 space-y-2">
+                <p class="text-sm font-medium text-slate-700">No problem — do this instead:</p>
+                <ol class="text-xs text-slate-500 list-decimal pl-4 space-y-1">
+                    <li>Request a fresh link above (old ones stop working).</li>
+                    <li>In the email, <span class="font-medium">press and hold</span> the button, then tap <span class="font-medium">Copy</span>. Don't tap it open.</li>
+                    <li>Paste the link here:</li>
+                </ol>
+                <input type="text" id="reset-link-input" placeholder="Paste the link from the email" autocomplete="off" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm">
+                <p id="reset-link-error" class="hidden text-sm font-medium text-red-600"></p>
+                <button type="button" id="use-reset-link-btn" class="w-full py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg font-medium transition-colors shadow-sm text-sm">Continue</button>
+            </div>
+        </form>
+        <form id="set-password-form" class="p-6 space-y-4 hidden">
+            <p class="text-sm text-slate-600">Your account is confirmed. Set a password to finish setting up teacher access.</p>
+            <div>
+                <label for="new-teacher-password" class="block text-sm font-medium text-slate-700 mb-1">New password</label>
+                <input type="password" id="new-teacher-password" required minlength="6" autocomplete="new-password" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
+            </div>
+            <p id="set-password-error" class="hidden text-sm font-medium text-red-600"></p>
+            <button type="submit" id="set-password-btn" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm">Set password &amp; open dashboard</button>
+            <button type="button" id="skip-password-btn" class="w-full text-sm text-slate-500 hover:text-slate-700 hover:underline py-1">Skip for now — open the dashboard</button>
+        </form>
+    </div>
+</div>
+<script>
+    const defaultDeck = [
+        { id: "v1", english: "City Hall", spanish: "el ayuntamiento", context: "El alcalde trabaja en el ayuntamiento." },
+        { id: "v2", english: "Skyscraper", spanish: "el rascacielos", context: "Hay muchos rascacielos en Nueva York." },
+        { id: "v3", english: "Sidewalk", spanish: "la acera", context: "Caminamos por la acera."},
+        { id: "v4", english: "Traffic light", spanish: "el semáforo", context: "El semáforo está en rojo." },
+        { id: "v5", english: "To cross", spanish: "cruzar", context: "Tenemos que cruzar la calle." },
+        { id: "v6", english: "Subway", spanish: "el metro", context: "Tomo el metro para ir al trabajo." },
+        { id: "v7", english: "Neighborhood", spanish: "el barrio", context: "Mi barrio es muy tranquilo." },
+        { id: "v8", english: "To be lost", spanish: "estar perdido/a", context: "No tengo mapa, estoy perdido." }
+    ];
+    const INIT_EASE = 2.5;
+    const MIN_EASE = 1.3;
+    let deck = [];
+    let dueQueue = [];
+    let currentCard = null;
+    let sessionReviews = 0;
+
+let studyMode = 'flip';
+let studyDirection = 'en-es';
+const flashcardContainer = document.getElementById('flashcard-container');
+const flashcard = document.getElementById('flashcard');
+const promptEl = document.getElementById('card-prompt');
+const promptLabelEl = document.getElementById('card-prompt-label');
+const answerEl = document.getElementById('card-answer');
+const answerSpeakBtn = document.getElementById('answer-speak-btn');
+const promptSpeakBtn = document.getElementById('prompt-speak-btn');
+const contextEl = document.getElementById('card-context');
+const endOfDeckMsg = document.getElementById('end-of-deck-msg');
+const cardTapHint = document.getElementById('card-tap-hint');
+const typingInputWrapper = document.getElementById('typing-input-wrapper');
+const typingInput = document.getElementById('typing-input');
+const typingSubmitBtn = document.getElementById('typing-submit-btn');
+const typingFeedbackBadge = document.getElementById('typing-feedback-badge');
+const typingComparison = document.getElementById('typing-comparison');
+const userTypedText = document.getElementById('user-typed-text');
+const modeFlipBtn = document.getElementById('mode-flip-btn');
+const modeTypeBtn = document.getElementById('mode-type-btn');
+const modeSpeakBtn = document.getElementById('mode-speak-btn');
+const speakPanel = document.getElementById('speak-panel');
+const micBtn = document.getElementById('mic-btn');
+const speakStatus = document.getElementById('speak-status');
+const speakHeard = document.getElementById('speak-heard');
+const speakHeardText = document.getElementById('speak-heard-text');
+const speakVerdict = document.getElementById('speak-verdict');
+const speakListenBtn = document.getElementById('speak-listen-btn');
+const speakRevealBtn = document.getElementById('speak-reveal-btn');
+const speakUnsupported = document.getElementById('speak-unsupported');
+const dirEnesBtn = document.getElementById('dir-enes-btn');
+const dirEsenBtn = document.getElementById('dir-esen-btn');
+const revealBtn = document.getElementById('reveal-btn');
+const gradingButtons = document.getElementById('grading-buttons');
+const gradeBtns = document.querySelectorAll('.grade-btn');
+const resetBtn = document.getElementById('reset-btn');
+const reviewAheadBtn = document.getElementById('review-ahead-btn');
+const statDue = document.getElementById('stat-due');
+const statReviewed = document.getElementById('stat-reviewed');
+const deckStatus = document.getElementById('deck-status');
+const vocabTableBody = document.getElementById('vocab-table-body');
+const addModal = document.getElementById('add-modal');
+const openAddModalBtn = document.getElementById('open-add-modal-btn');
+const closeModalBtn = document.getElementById('close-modal-btn');
+const cancelModalBtn = document.getElementById('cancel-modal-btn');
+const addWordForm = document.getElementById('add-word-form');
+const addStatusMsg = document.getElementById('add-status-msg');
+const tabSingle = document.getElementById('tab-single');
+const tabBulk = document.getElementById('tab-bulk');
+const bulkWordForm = document.getElementById('bulk-word-form');
+const cancelBulkBtn = document.getElementById('cancel-bulk-btn');
+const bulkInput = document.getElementById('bulk-input');
+const statusText = document.getElementById('status-text');
+function calculateNextInterval(card, grade) {
+    let ease = card.easeFactor || INIT_EASE;
+    let interval = card.interval || 0;
+    let step = card.step || 0;
+   const STEP_0_MINS = 1;
+   const STEP_1_MINS = 10;
+   const GRADUATED_BASE = 1440;
+   if (grade === 'hard') {
+       ease = Math.max(MIN_EASE, ease - 0.2);
+       interval = STEP_0_MINS;
+       step = 0;
+   } else if (grade === 'good') {
+       if (step === 0) {
+           interval = STEP_1_MINS;
+           step = 1;
+       } else if (step === 1) {
+           interval = GRADUATED_BASE;
+           step = 2;
+       } else {
+
+               interval = interval * ease;
+           }
+       } else if (grade === 'easy') {
+           ease += 0.15;
+           if (step < 2) {
+               interval = GRADUATED_BASE * ease;
+               step = 2;
+           } else {
+               interval = (interval * ease) * 1.3;
+           }
+       }
+       return { interval, easeFactor: ease, step };
+   }
+    function formatInterval(minutes) {
+        if (minutes === 0) return "Now";
+        if (minutes < 60) return `${Math.round(minutes)} min`;
+        if (minutes < 1440) return `${Math.round(minutes / 60)} hr`;
+        return `${Math.round(minutes / 1440)} day${Math.round(minutes / 1440) !== 1 ? 's' :''}`;
+    }
+   function getPreviewIntervals(card) {
+       return {
+           hard: formatInterval(calculateNextInterval(card, 'hard').interval),
+           good: formatInterval(calculateNextInterval(card, 'good').interval),
+           easy: formatInterval(calculateNextInterval(card, 'easy').interval)
+       };
+   }
+   function loadDeck() {
+       const savedData = localStorage.getItem('srs_deck_v1');
+       if (savedData) {
+           deck = JSON.parse(savedData);
+       } else {
+           deck = defaultDeck.map(word => ({
+                ...word,
+                interval: 0,
+                easeFactor: INIT_EASE,
+                step: 0,
+                nextReviewTime: Date.now(),
+                reviews: 0
+           }));
+           saveDeck();
+       }
+       updateQueue();
+       updateTable();
+   }
+   function saveDeck() {
+       localStorage.setItem('srs_deck_v1', JSON.stringify(deck));
+   }
+   function resetDeck() {
+       localStorage.removeItem('srs_deck_v1');
+       sessionReviews = 0;
+       statReviewed.textContent = "0";
+       loadDeck();
+   }
+   function updateQueue() {
+       const now = Date.now();
+       dueQueue = deck
+           .filter(card => card.nextReviewTime <= now)
+           .sort((a, b) => a.nextReviewTime - b.nextReviewTime);
+       statDue.textContent = dueQueue.length;
+        if (dueQueue.length > 0) {
+            deckStatus.innerHTML = `<span class="text-indigo-600 font-bold">${dueQueue.length}</span> cards due`;
+            showCard();
+
+        } else {
+            deckStatus.innerHTML = `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-check mr-1"></i>All caught up</span>`;
+            showEndOfDeck();
+        }
+    }
+      function forceReviewMode() {
+          dueQueue = [...deck].sort((a, b) => a.interval - b.interval).slice(0, 5);
+          statDue.textContent = dueQueue.length;
+          deckStatus.innerHTML = `<span class="text-amber-600 font-bold">Extra Practice Mode</span>`;
+          showCard();
+      }
+      function cleanString(str) {
+          return str.toLowerCase()
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+              .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"")
+              .trim();
+      }
+      function showCard() {
+          if (dueQueue.length === 0) return;
+          currentCard = dueQueue[0];
+          flashcard.classList.remove('flipped');
+          flashcardContainer.classList.remove('hidden');
+          endOfDeckMsg.classList.add('hidden');
+          typingInput.value = '';
+          typingComparison.classList.add('hidden');
+          typingFeedbackBadge.classList.add('hidden');
+          if (studyDirection === 'en-es') {
+              promptLabelEl.textContent = "Translate to Spanish";
+              promptEl.textContent = currentCard.english;
+              answerEl.textContent = currentCard.spanish;
+              promptSpeakBtn.classList.add('hidden');
+              answerSpeakBtn.classList.remove('hidden');
+          } else {
+              promptLabelEl.textContent = "Translate to English";
+              promptEl.textContent = currentCard.spanish;
+              answerEl.textContent = currentCard.english;
+              promptSpeakBtn.classList.remove('hidden');
+              answerSpeakBtn.classList.add('hidden');
+          }
+        if (studyMode === 'type') {
+            cardTapHint.classList.add('hidden');
+            speakPanel.classList.add('hidden');
+            typingInputWrapper.classList.remove('hidden');
+            revealBtn.classList.add('hidden');
+            gradingButtons.classList.add('hidden');
+            typingInput.placeholder = studyDirection === 'en-es' ? 'Escribe en español...' : ' Type in English...';
+            setTimeout(() => typingInput.focus(), 100);
+        } else if (studyMode === 'speak') {
+            // Speaking practice always targets the Spanish word, whichever
+            // direction is selected: see the English, say the Spanish.
+            promptLabelEl.textContent = "Say it in Spanish";
+            promptEl.textContent = currentCard.english;
+            answerEl.textContent = currentCard.spanish;
+            promptSpeakBtn.classList.add('hidden');
+            answerSpeakBtn.classList.remove('hidden');
+            cardTapHint.classList.add('hidden');
+            typingInputWrapper.classList.add('hidden');
+            revealBtn.classList.add('hidden');
+            gradingButtons.classList.add('hidden');
+            speakPanel.classList.remove('hidden');
+            resetSpeakUI();
+        } else {
+            cardTapHint.classList.remove('hidden');
+            typingInputWrapper.classList.add('hidden');
+            speakPanel.classList.add('hidden');
+            revealBtn.classList.remove('hidden');
+            gradingButtons.classList.add('hidden');
+        }
+        if (studyMode !== 'speak') stopListening();
+          if (currentCard.context) {
+              contextEl.textContent = `"${currentCard.context}"`;
+              contextEl.classList.remove('hidden');
+          } else {
+              contextEl.classList.add('hidden');
+          }
+      }
+      function showEndOfDeck() {
+          flashcardContainer.classList.add('hidden');
+
+        document.getElementById('controls-container').classList.add('hidden');
+        endOfDeckMsg.classList.remove('hidden');
+        if(deck.length > 0) reviewAheadBtn.classList.remove('hidden');
+   }
+   function revealAnswer() {
+       flashcard.classList.add('flipped');
+       revealBtn.classList.add('hidden');
+       gradingButtons.classList.remove('hidden');
+        const previews = getPreviewIntervals(currentCard);
+        document.querySelector('[data-grade="hard"] .interval-preview').textContent = previews.hard;
+        document.querySelector('[data-grade="good"] .interval-preview').textContent = previews.good;
+        document.querySelector('[data-grade="easy"] .interval-preview').textContent = previews.easy;
+    }
+   function processTypingSubmission() {
+       const userText = typingInput.value.trim();
+       if (!userText) return;
+       setComparisonVerb('You typed');
+        const targetText = studyDirection === 'en-es' ? currentCard.spanish : currentCard.english;
+        const isExact = userText.trim().toLowerCase() === targetText.trim().toLowerCase();
+        const isClose = cleanString(userText) === cleanString(targetText);
+        if (isExact) {
+            typingFeedbackBadge.innerHTML = `<span class="bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-check"></i> Perfect Match!</span>`;
+        } else if (isClose) {
+            typingFeedbackBadge.innerHTML = `<span class="bg-amber-100 text-amber-800 border border-amber-300 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i> Watch Accents / Spelling</span>`;
+        } else {
+            typingFeedbackBadge.innerHTML = `<span class="bg-red-100 text-red-800 border border-red-300 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-xmark"></i> Incorrect</span>`;
+        }
+        userTypedText.textContent = userText;
+        typingComparison.classList.remove('hidden');
+        typingFeedbackBadge.classList.remove('hidden');
+        revealAnswer();
+   }
+   // ---------- Speaking practice ----------
+   // The student says the Spanish word aloud; the browser's speech
+   // recognizer (Spanish) transcribes it and we compare against the card's
+   // Spanish with the same accent-insensitive matching Type mode uses.
+   const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+   let recognition = null;
+   let isListening = false;
+   let speakAttempts = 0;
+
+   function setComparisonVerb(verb) {
+       if (typingComparison.childNodes.length) typingComparison.childNodes[0].textContent = verb + ': ';
+   }
+
+   function setListeningUI(on) {
+       isListening = on;
+       micBtn.classList.toggle('bg-red-600', on);
+       micBtn.classList.toggle('hover:bg-red-700', on);
+       micBtn.classList.toggle('mic-listening', on);
+       micBtn.classList.toggle('bg-indigo-600', !on);
+       micBtn.classList.toggle('hover:bg-indigo-700', !on);
+       if (on) speakStatus.textContent = 'Listening… say the word now.';
+   }
+
+   function stopListening() {
+       if (recognition) {
+           try { recognition.abort(); } catch (e) { /* ignore */ }
+           recognition = null;
+       }
+       if (isListening) setListeningUI(false);
+   }
+
+   function resetSpeakUI() {
+       stopListening();
+       speakAttempts = 0;
+       speakHeard.classList.add('hidden');
+       speakVerdict.classList.add('hidden');
+       speakVerdict.innerHTML = '';
+       micBtn.disabled = false;
+       if (!SpeechRecognitionCtor) {
+           speakUnsupported.textContent = 'This browser can\'t listen to speech — recognition works in Chrome (Android or desktop) and Safari (iPhone). You can still tap "Hear it first", say the word out loud, then "Show answer" and grade yourself.';
+           speakUnsupported.classList.remove('hidden');
+           micBtn.classList.add('opacity-50');
+           micBtn.disabled = true;
+           speakStatus.textContent = 'Say the word out loud, then check yourself.';
+       } else {
+           speakUnsupported.classList.add('hidden');
+           micBtn.classList.remove('opacity-50');
+           speakStatus.textContent = 'Tap the mic and say the word in Spanish.';
+       }
+   }
+
+   function speakVerdictBadge(kind, html) {
+       const styles = {
+           bad: 'bg-red-100 text-red-800 border-red-300',
+           warn: 'bg-amber-100 text-amber-800 border-amber-300'
+       };
+       speakVerdict.innerHTML = `<span class="${styles[kind]} border px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5">${html}</span>`;
+       speakVerdict.classList.remove('hidden');
+   }
+
+   function handleSpeakResult(alternatives) {
+       if (!currentCard) return;
+       const target = currentCard.spanish;
+       const targetClean = cleanString(target);
+       let heard = alternatives[0] || '';
+       let matched = false;
+       for (let i = 0; i < alternatives.length; i++) {
+           if (cleanString(alternatives[i]) === targetClean) { matched = true; heard = alternatives[i]; break; }
+       }
+       speakHeardText.textContent = '"' + heard + '"';
+       speakHeard.classList.remove('hidden');
+       if (matched) {
+           setComparisonVerb('You said');
+           userTypedText.textContent = heard;
+           typingComparison.classList.remove('hidden');
+           typingFeedbackBadge.innerHTML = `<span class="bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-check"></i> ¡Perfecto! You said it right.</span>`;
+           typingFeedbackBadge.classList.remove('hidden');
+           speakStatus.textContent = 'Tap the mic and say the word in Spanish.';
+           revealAnswer();
+           return;
+       }
+       speakAttempts++;
+       if (speakAttempts >= 2) {
+           setComparisonVerb('You said');
+           userTypedText.textContent = heard;
+           typingComparison.classList.remove('hidden');
+           typingFeedbackBadge.innerHTML = `<span class="bg-red-100 text-red-800 border border-red-300 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-circle-xmark"></i> Not quite — here's the word. Grade it and keep practicing.</span>`;
+           typingFeedbackBadge.classList.remove('hidden');
+           speakStatus.textContent = 'Tap the mic and say the word in Spanish.';
+           revealAnswer();
+       } else {
+           speakVerdictBadge('bad', '<i class="fa-solid fa-circle-xmark"></i> Not quite — tap "Hear it first", then try once more.');
+           speakStatus.textContent = 'One more try — tap the mic when you\'re ready.';
+       }
+   }
+
+   function startListening() {
+       if (!currentCard || !SpeechRecognitionCtor) return;
+       if (flashcard.classList.contains('flipped')) return;
+       if (isListening) { stopListening(); speakStatus.textContent = 'Tap the mic and say the word in Spanish.'; return; }
+       speakVerdict.classList.add('hidden');
+       let rec;
+       try {
+           rec = new SpeechRecognitionCtor();
+       } catch (e) {
+           speakUnsupported.textContent = 'Speech recognition couldn\'t start on this device. Tap "Hear it first", say the word out loud, then "Show answer" and grade yourself.';
+           speakUnsupported.classList.remove('hidden');
+           return;
+       }
+       recognition = rec;
+       rec.lang = 'es-ES';
+       rec.interimResults = false;
+       rec.maxAlternatives = 3;
+       rec.onresult = (event) => {
+           const alts = [];
+           const result = event.results[0];
+           for (let i = 0; i < result.length; i++) alts.push(result[i].transcript);
+           handleSpeakResult(alts);
+       };
+       rec.onerror = (event) => {
+           setListeningUI(false);
+           recognition = null;
+           if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+               speakStatus.textContent = 'Microphone access was blocked. Allow the mic in your browser settings — or use "Hear it first" + "Show answer" and grade yourself.';
+           } else if (event.error === 'no-speech') {
+               speakStatus.textContent = 'Didn\'t hear anything — tap the mic and try again.';
+           } else if (event.error === 'audio-capture') {
+               speakStatus.textContent = 'No microphone was found on this device.';
+           } else if (event.error === 'network') {
+               speakStatus.textContent = 'Speech recognition needs an internet connection — check yours and try again.';
+           } else if (event.error !== 'aborted') {
+               speakStatus.textContent = 'That didn\'t work — tap the mic and try again.';
+           }
+       };
+       rec.onend = () => { if (recognition === rec) { recognition = null; setListeningUI(false); } };
+       setListeningUI(true);
+       try {
+           rec.start();
+       } catch (e) {
+           setListeningUI(false);
+           recognition = null;
+       }
+   }
+   function processGrade(grade) {
+       stopListening();
+       const result = calculateNextInterval(currentCard, grade);
+       const deckIndex = deck.findIndex(c => c.id === currentCard.id);
+       if (deckIndex !== -1) {
+           deck[deckIndex].interval = result.interval;
+           deck[deckIndex].easeFactor = result.easeFactor;
+           deck[deckIndex].step = result.step;
+           deck[deckIndex].nextReviewTime = Date.now() + (result.interval * 60 * 1000);
+           deck[deckIndex].reviews = (deck[deckIndex].reviews || 0) + 1;
+       }
+        saveDeck();
+        sessionReviews++;
+        statReviewed.textContent = sessionReviews;
+        if (typeof trackGradeSync === 'function') trackGradeSync(grade);
+        updateTable();
+        flashcardContainer.style.opacity = '0';
+        setTimeout(() => {
+            updateQueue();
+            if(!flashcardContainer.classList.contains('hidden')) {
+                 flashcardContainer.style.opacity = '1';
+            }
+           document.getElementById('controls-container').classList.remove('hidden');
+
+        }, 300);
+   }
+   function updateTable() {
+       vocabTableBody.innerHTML = '';
+       const sortedDeck = [...deck].sort((a, b) => a.nextReviewTime - b.nextReviewTime);
+       const now = Date.now();
+        sortedDeck.forEach(card => {
+            const tr = document.createElement('tr');
+            let statusHtml = card.nextReviewTime <= now
+                ? `<span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-2" title="Due Now"></span>`
+                : card.interval > 1440
+                ? `<span class="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2" title="Learned"></span>`
+                : `<span class="inline-block w-2 h-2 rounded-full bg-amber-500 mr-2" title="Learning"></span>`;
+            let timeDisplay = card.nextReviewTime <= now ? "Due" : formatInterval((card.nextReviewTime - now) / 60000);
+              tr.innerHTML = `
+                  <td class="py-2.5 px-4 border-b border-slate-50">
+                      <div class="flex items-center">
+                          ${statusHtml}
+                          <span class="font-medium text-slate-800">${card.spanish}</span>
+                      </div>
+                      <div class="text-xs text-slate-400 ml-4">${card.english}</div>
+                  </td>
+                  <td class="py-2.5 px-4 border-b border-slate-50 text-right">
+                      <div class="text-xs font-semibold text-slate-700">${timeDisplay}</div>
+                      <div class="text-[10px] text-slate-400">Ease: ${card.easeFactor.toFixed(2)}</div>
+                  </td>
+              `;
+              vocabTableBody.appendChild(tr);
+        });
+   }
+   function openModal() {
+       addModal.classList.remove('hidden');
+       document.getElementById('new-spanish').focus();
+   }
+   function closeModal() {
+       addModal.classList.add('hidden');
+       addWordForm.reset();
+       bulkWordForm.reset();
+       addStatusMsg.classList.add('hidden');
+   }
+   function addNewWord(e) {
+       e.preventDefault();
+       const spanishInput = document.getElementById('new-spanish').value.trim();
+       const englishInput = document.getElementById('new-english').value.trim();
+       const contextInput = document.getElementById('new-context').value.trim();
+        if (!spanishInput || !englishInput) return;
+        deck.push({
+            id: 'v' + Date.now(),
+            spanish: spanishInput,
+            english: englishInput,
+            context: contextInput,
+            interval: 0,
+            easeFactor: INIT_EASE,
+            step: 0,
+            nextReviewTime: Date.now(),
+            reviews: 0
+        });
+        saveDeck();
+
+    statusText.textContent = 'Word added successfully!';
+    addStatusMsg.classList.remove('hidden');
+    addWordForm.reset();
+    document.getElementById('new-spanish').focus();
+    updateQueue();
+    updateTable();
+    setTimeout(() => addStatusMsg.classList.add('hidden'), 2500);
+}
+// Parse a word list in the bulk-import format: one word per line,
+// Spanish, English, optional context sentence — tab or comma separated.
+// Context may itself contain commas, so extra fields are rejoined.
+function parseWordList(text) {
+    const words = [];
+    String(text || '').split('\n').forEach(line => {
+        const parts = line.split(/\t|,/);
+        if (parts.length >= 2) {
+            const spanish = parts[0].trim();
+            const english = parts[1].trim();
+            const context = parts.length > 2 ? parts.slice(2).join(',').trim() : '';
+            if (spanish && english) words.push({ spanish: spanish, english: english, context: context });
+        }
+    });
+    return words;
+}
+// Merge parsed words into the deck, skipping any Spanish word already in
+// the deck (or repeated within the list) so existing progress is preserved.
+function mergeWordsIntoDeck(words) {
+    const seen = {};
+    deck.forEach(c => { seen[cleanString(String(c.spanish || ''))] = true; });
+    let added = 0, skipped = 0;
+    words.forEach(w => {
+        const key = cleanString(String(w.spanish || ''));
+        if (seen[key]) { skipped++; return; }
+        seen[key] = true;
+        deck.push({
+            id: 'v' + Date.now() + Math.random().toString(36).substr(2, 5),
+            spanish: w.spanish,
+            english: w.english,
+            context: w.context || '',
+            interval: 0,
+            easeFactor: INIT_EASE,
+            step: 0,
+            nextReviewTime: Date.now(),
+            reviews: 0
+        });
+        added++;
+    });
+    return { added: added, skipped: skipped };
+}
+function readWordFile(file, onText, onError) {
+    const reader = new FileReader();
+    reader.onload = () => onText(String(reader.result || ''));
+    reader.onerror = () => onError && onError();
+    reader.readAsText(file);
+}
+function addBulkWords(e) {
+    e.preventDefault();
+    const text = bulkInput.value.trim();
+    if (!text) return;
+    const result = mergeWordsIntoDeck(parseWordList(text));
+    if (result.added > 0) {
+        saveDeck();
+        statusText.textContent = `${result.added} word${result.added === 1 ? '' : 's'} added successfully!` + (result.skipped ? ` (${result.skipped} already in your deck — skipped.)` : '');
+        addStatusMsg.classList.remove('hidden');
+        bulkWordForm.reset();
+        updateQueue();
+        updateTable();
+        setTimeout(() => addStatusMsg.classList.add('hidden'), 3000);
+    } else if (result.skipped > 0) {
+        statusText.textContent = 'Those words are already in your deck — nothing new to add.';
+        addStatusMsg.classList.remove('hidden');
+        setTimeout(() => addStatusMsg.classList.add('hidden'), 3000);
+    }
+}
+function speakSpanish(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'es-ES';
+        utterance.rate = 0.85;
+        window.speechSynthesis.speak(utterance);
+    }
+}
+answerSpeakBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentCard) speakSpanish(currentCard.spanish);
+});
+promptSpeakBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentCard && studyDirection === 'es-en') speakSpanish(currentCard.spanish);
+});
+
+    function setStudyMode(mode) {
+        studyMode = mode;
+        const active = "px-3 py-1.5 rounded-lg bg-white text-indigo-600 shadow-xs transition-all flex items-center gap-1.5";
+        const idle = "px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5";
+        modeFlipBtn.className = mode === 'flip' ? active : idle;
+        modeTypeBtn.className = mode === 'type' ? active : idle;
+        modeSpeakBtn.className = mode === 'speak' ? active : idle;
+        showCard();
+    }
+    modeFlipBtn.addEventListener('click', () => setStudyMode('flip'));
+    modeTypeBtn.addEventListener('click', () => setStudyMode('type'));
+    modeSpeakBtn.addEventListener('click', () => setStudyMode('speak'));
+    micBtn.addEventListener('click', startListening);
+    speakListenBtn.addEventListener('click', () => {
+        if (currentCard) speakSpanish(currentCard.spanish);
+    });
+    speakRevealBtn.addEventListener('click', () => {
+        stopListening();
+        typingFeedbackBadge.classList.add('hidden');
+        typingComparison.classList.add('hidden');
+        revealAnswer();
+    });
+    dirEnesBtn.addEventListener('click', () => {
+        studyDirection = 'en-es';
+        dirEnesBtn.className = "px-3 py-1.5 rounded-lg bg-white text-indigo-600 shadow-xs transition-all";
+        dirEsenBtn.className = "px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+        showCard();
+    });
+    dirEsenBtn.addEventListener('click', () => {
+        studyDirection = 'es-en';
+        dirEsenBtn.className = "px-3 py-1.5 rounded-lg bg-white text-indigo-600 shadow-xs transition-all";
+        dirEnesBtn.className = "px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+        showCard();
+    });
+   typingSubmitBtn.addEventListener('click', processTypingSubmission);
+   typingInput.addEventListener('keydown', (e) => {
+       if (e.key === 'Enter') {
+           e.preventDefault();
+           processTypingSubmission();
+       }
+   });
+   revealBtn.addEventListener('click', revealAnswer);
+   flashcard.addEventListener('click', () => {
+       if (studyMode === 'flip' && !flashcard.classList.contains('flipped')) {
+           revealAnswer();
+       }
+   });
+   gradeBtns.forEach(btn => {
+       btn.addEventListener('click', (e) => {
+           e.stopPropagation();
+           processGrade(btn.getAttribute('data-grade'));
+       });
+   });
+   resetBtn.addEventListener('click', resetDeck);
+   reviewAheadBtn.addEventListener('click', forceReviewMode);
+   openAddModalBtn.addEventListener('click', openModal);
+   closeModalBtn.addEventListener('click', closeModal);
+   cancelModalBtn.addEventListener('click', closeModal);
+   cancelBulkBtn.addEventListener('click', closeModal);
+   addWordForm.addEventListener('submit', addNewWord);
+   bulkWordForm.addEventListener('submit', addBulkWords);
+   const bulkFileBtn = document.getElementById('bulk-file-btn');
+   const bulkFileInput = document.getElementById('bulk-file-input');
+   bulkFileBtn.addEventListener('click', () => bulkFileInput.click());
+   bulkFileInput.addEventListener('change', () => {
+       const file = bulkFileInput.files && bulkFileInput.files[0];
+       if (!file) return;
+       readWordFile(file, (text) => {
+           const result = mergeWordsIntoDeck(parseWordList(text));
+           if (result.added > 0) {
+               saveDeck();
+               updateQueue();
+               updateTable();
+               statusText.textContent = `${result.added} word${result.added === 1 ? '' : 's'} added from ${file.name}!` + (result.skipped ? ` (${result.skipped} already in your deck — skipped.)` : '');
+           } else if (result.skipped > 0) {
+               statusText.textContent = `No new words in ${file.name} — all ${result.skipped} were already in your deck.`;
+           } else {
+               statusText.textContent = `No words found in ${file.name}. Use one word per line: Spanish, English.`;
+           }
+           addStatusMsg.classList.remove('hidden');
+           setTimeout(() => addStatusMsg.classList.add('hidden'), 4000);
+           bulkFileInput.value = '';
+       }, () => {
+           statusText.textContent = `Couldn't read ${file.name} — try again.`;
+           addStatusMsg.classList.remove('hidden');
+           setTimeout(() => addStatusMsg.classList.add('hidden'), 4000);
+           bulkFileInput.value = '';
+       });
+   });
+   tabSingle.addEventListener('click', () => {
+       tabSingle.classList.add('text-indigo-600', 'border-indigo-600');
+       tabSingle.classList.remove('text-slate-500', 'border-transparent');
+       tabBulk.classList.remove('text-indigo-600', 'border-indigo-600');
+       tabBulk.classList.add('text-slate-500', 'border-transparent');
+
+              addWordForm.classList.remove('hidden');
+              bulkWordForm.classList.add('hidden');
+        });
+        tabBulk.addEventListener('click', () => {
+            tabBulk.classList.add('text-indigo-600', 'border-indigo-600');
+            tabBulk.classList.remove('text-slate-500', 'border-transparent');
+            tabSingle.classList.remove('text-indigo-600', 'border-indigo-600');
+            tabSingle.classList.add('text-slate-500', 'border-transparent');
+            bulkWordForm.classList.remove('hidden');
+            addWordForm.classList.add('hidden');
+            bulkInput.focus();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (!addModal.classList.contains('hidden')) return;
+            if (e.code === 'Space' && studyMode === 'flip' && !flashcardContainer.classList.contains('hidden')) {
+                if (!flashcard.classList.contains('flipped')) {
+                    revealAnswer();
+                }
+                e.preventDefault();
+            }
+            if (flashcard.classList.contains('flipped') && !flashcardContainer.classList.contains('hidden')) {
+                if (e.key === '1') processGrade('hard');
+                if (e.key === '2') processGrade('good');
+                if (e.key === '3') processGrade('easy');
+            }
+        });
+        window.addEventListener('DOMContentLoaded', () => {
+            loadDeck();
+            setInterval(() => {
+                if(dueQueue.length === 0) updateQueue();
+                updateTable();
+            }, 60000);
+        });
+    </script>
+<script>
+(function () {
+    const SUPABASE_URL = 'https://ehwumgpgcyctacpdrsta.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVod3VtZ3BnY3ljdGFjcGRyc3RhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5ODY4NTksImV4cCI6MjEwNzU2Mjg1OX0.fA5cM3JOndbJS4fBIccLvaWcqrTTloKtntGpuiAetqk';
+    const TEACHER_EMAIL = 'jcharno42@gmail.com';
+    // Email auth links must come back to THIS page's own address — the
+    // page actually running this code — so the sign-in tokens Supabase
+    // appends land here, where the set-password form can use them. Sending
+    // them to the muse.ai share page instead strands the tokens on a
+    // wrapper page and the link appears to "do nothing". Derived from the
+    // live location so it is correct wherever the app is opened from.
+    function appReturnUrl() {
+        return window.location.origin + window.location.pathname;
+    }
+
+    let sb = null;
+    let sbUser = null;
+    let dashTimer = null;
+    let dashRows = [];
+    let dashSort = { key: 'last_active', dir: -1 };
+
+    const headerEl = document.querySelector('header');
+    const studyMain = document.getElementById('study-main');
+    const dashboardEl = document.getElementById('teacher-dashboard');
+    const dashEmpty = document.getElementById('dash-empty');
+    const dashContent = document.getElementById('dash-content');
+    const dashStatus = document.getElementById('dash-status');
+    const dashTbody = document.getElementById('dash-tbody');
+    const nameOverlay = document.getElementById('name-overlay');
+    const nameForm = document.getElementById('name-form');
+    const nameInput = document.getElementById('student-name-input');
+    const closeNameOverlayBtn = document.getElementById('close-name-overlay-btn');
+    const nameDisplay = document.getElementById('student-name-display');
+    const teacherModal = document.getElementById('teacher-modal');
+    const teacherModalTitle = document.getElementById('teacher-modal-title');
+    const signinForm = document.getElementById('teacher-signin-form');
+    const setPasswordForm = document.getElementById('set-password-form');
+    const authError = document.getElementById('teacher-auth-error');
+    const authInfo = document.getElementById('teacher-auth-info');
+    const forgotPasswordBtn = document.getElementById('forgot-password-btn');
+    const setPasswordError = document.getElementById('set-password-error');
+    const resetLinkInput = document.getElementById('reset-link-input');
+    const resetLinkError = document.getElementById('reset-link-error');
+    const useResetLinkBtn = document.getElementById('use-reset-link-btn');
+    const resetHelpToggle = document.getElementById('reset-help-toggle');
+    const resetLinkHelp = document.getElementById('reset-link-help');
+
+    function showResetHelp(focus) {
+        resetLinkHelp.classList.remove('hidden');
+        if (focus) setTimeout(() => resetLinkInput.focus(), 50);
+    }
+
+    // ---------- Class assignments ----------
+    // A teacher builds an assignment (title, due date, word list) in the
+    // dashboard and shares it as a link. The link carries the whole
+    // assignment, so a student opening it gets the words merged into their
+    // own deck — no accounts or uploads involved. The teacher's current
+    // assignment is kept on this device; each student's copy and progress
+    // live in their own app.
+    const STUDENT_ASSIGN_KEY = 'srs_assignment_v1';
+    const TEACHER_ASSIGN_KEY = 'srs_teacher_assignment_v1';
+    const ASSIGN_DISMISSED_KEY = 'srs_assignment_dismissed';
+    const assignBanner = document.getElementById('assignment-banner');
+
+    function assignWordKey(s) { return cleanString(String(s == null ? '' : s)); }
+
+    function getStoredAssignment(key) {
+        try {
+            const a = JSON.parse(localStorage.getItem(key));
+            if (a && a.title && a.dueDate && Array.isArray(a.words) && a.words.length) return a;
+        } catch (e) { /* ignore */ }
+        return null;
+    }
+
+    function encodeAssignment(a) {
+        return btoa(unescape(encodeURIComponent(JSON.stringify(a))))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function decodeAssignment(str) {
+        try {
+            const b64 = String(str).replace(/-/g, '+').replace(/_/g, '/');
+            const a = JSON.parse(decodeURIComponent(escape(atob(b64))));
+            if (!a || !a.title || !a.dueDate || !Array.isArray(a.words)) return null;
+            a.words = a.words.filter(w => w && w.spanish && w.english)
+                .map(w => ({ spanish: String(w.spanish), english: String(w.english), context: w.context ? String(w.context) : '' }));
+            if (!a.words.length || !a.id) return null;
+            return a;
+        } catch (e) { return null; }
+    }
+
+    function assignmentLink(a) {
+        return appReturnUrl() + '?assignment=' + encodeAssignment(a);
+    }
+
+    function assignmentDueInfo(dueStr) {
+        const due = new Date(dueStr + 'T00:00:00');
+        if (isNaN(due.getTime())) return { label: '' };
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const days = Math.round((due.getTime() - today.getTime()) / 86400000);
+        const dateLabel = due.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        if (days < 0) return { label: 'Due ' + dateLabel + ' — overdue by ' + Math.abs(days) + (Math.abs(days) === 1 ? ' day' : ' days') };
+        if (days === 0) return { label: 'Due today — ' + dateLabel };
+        if (days === 1) return { label: 'Due tomorrow — ' + dateLabel };
+        return { label: 'Due ' + dateLabel + ' — in ' + days + ' days' };
+    }
+
+    function assignmentProgress(a) {
+        let reviewed = 0, mastered = 0;
+        a.words.forEach(w => {
+            const key = assignWordKey(w.spanish);
+            const c = deck.find(card => assignWordKey(card.spanish) === key);
+            if (c) {
+                if ((c.reviews || 0) > 0) reviewed++;
+                if ((c.interval || 0) > 1440) mastered++;
+            }
+        });
+        return { total: a.words.length, reviewed: reviewed, mastered: mastered };
+    }
+
+    function renderAssignmentBanner() {
+        if (!assignBanner) return;
+        const a = getStoredAssignment(STUDENT_ASSIGN_KEY);
+        let dismissed = null;
+        try { dismissed = localStorage.getItem(ASSIGN_DISMISSED_KEY); } catch (e) { /* ignore */ }
+        if (!a || dismissed === a.id) { assignBanner.classList.add('hidden'); return; }
+        const p = assignmentProgress(a);
+        document.getElementById('assign-banner-title').textContent = a.title;
+        document.getElementById('assign-banner-due').textContent = assignmentDueInfo(a.dueDate).label;
+        document.getElementById('assign-banner-progress-text').textContent = p.reviewed + ' of ' + p.total + ' words reviewed';
+        document.getElementById('assign-banner-mastered-text').textContent = p.mastered + ' mastered';
+        document.getElementById('assign-banner-bar').style.width = (p.total ? Math.round((p.reviewed / p.total) * 100) : 0) + '%';
+        const done = p.total > 0 && p.reviewed === p.total;
+        const doneEl = document.getElementById('assign-banner-done');
+        doneEl.classList.toggle('hidden', !done);
+        doneEl.classList.toggle('flex', done);
+        document.getElementById('assign-practice-btn').classList.toggle('hidden', done);
+        assignBanner.classList.remove('hidden');
+    }
+
+    function ensureDeckLoadedForImport() {
+        if (deck && deck.length > 0) return;
+        try {
+            const saved = localStorage.getItem('srs_deck_v1');
+            if (saved) { deck = JSON.parse(saved); return; }
+        } catch (e) { /* ignore */ }
+        deck = defaultDeck.map(w => ({
+            ...w, interval: 0, easeFactor: INIT_EASE, step: 0,
+            nextReviewTime: Date.now(), reviews: 0
+        }));
+    }
+
+    function importAssignment(a) {
+        ensureDeckLoadedForImport();
+        try {
+            localStorage.setItem(STUDENT_ASSIGN_KEY, JSON.stringify(a));
+            localStorage.removeItem(ASSIGN_DISMISSED_KEY);
+        } catch (e) { /* ignore */ }
+        a.words.forEach(w => {
+            const key = assignWordKey(w.spanish);
+            const existing = deck.find(c => assignWordKey(c.spanish) === key);
+            if (existing) {
+                if (!Array.isArray(existing.assignmentIds)) existing.assignmentIds = [];
+                if (existing.assignmentIds.indexOf(a.id) === -1) existing.assignmentIds.push(a.id);
+            } else {
+                deck.push({
+                    id: 'a' + Date.now() + Math.random().toString(36).substr(2, 5),
+                    spanish: w.spanish, english: w.english, context: w.context || '',
+                    interval: 0, easeFactor: INIT_EASE, step: 0,
+                    nextReviewTime: Date.now(), reviews: 0, assignmentIds: [a.id]
+                });
+            }
+        });
+        saveDeck();
+        updateQueue();
+        updateTable();
+        renderAssignmentBanner();
+    }
+
+    function practiceAssignment() {
+        const a = getStoredAssignment(STUDENT_ASSIGN_KEY);
+        if (!a) return;
+        const keys = {};
+        a.words.forEach(w => { keys[assignWordKey(w.spanish)] = true; });
+        const cards = deck.filter(c => keys[assignWordKey(c.spanish)]);
+        if (!cards.length) return;
+        cards.sort((x, y) => (x.nextReviewTime || 0) - (y.nextReviewTime || 0));
+        dueQueue = cards;
+        statDue.textContent = cards.length;
+        deckStatus.innerHTML = '<span class="text-indigo-600 font-bold">Assignment practice</span>';
+        document.getElementById('controls-container').classList.remove('hidden');
+        showCard();
+        flashcardContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function renderTeacherAssignment() {
+        const createWrap = document.getElementById('assign-create-wrap');
+        const activeWrap = document.getElementById('assign-active-wrap');
+        if (!createWrap || !activeWrap) return;
+        const a = getStoredAssignment(TEACHER_ASSIGN_KEY);
+        if (!a) {
+            createWrap.classList.remove('hidden');
+            activeWrap.classList.add('hidden');
+            return;
+        }
+        createWrap.classList.add('hidden');
+        activeWrap.classList.remove('hidden');
+        document.getElementById('assign-active-title').textContent = a.title;
+        let meta = assignmentDueInfo(a.dueDate).label;
+        if (a.createdAt) meta += ' · Created ' + new Date(a.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' });
+        document.getElementById('assign-active-meta').textContent = meta;
+        document.getElementById('assign-active-count').textContent = a.words.length + (a.words.length === 1 ? ' word' : ' words');
+        document.getElementById('assign-link-input').value = assignmentLink(a);
+        document.getElementById('assign-copy-msg').classList.add('hidden');
+    }
+
+    function initAssignments() {
+        try {
+            const enc = new URLSearchParams(window.location.search).get('assignment');
+            if (enc) {
+                const a = decodeAssignment(enc);
+                if (a) {
+                    importAssignment(a);
+                    try {
+                        const u = new URL(window.location.href);
+                        u.searchParams.delete('assignment');
+                        window.history.replaceState({}, '', u.toString());
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        } catch (e) { /* ignore */ }
+        renderAssignmentBanner();
+        renderTeacherAssignment();
+    }
+
+    function esc(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function getLifetime() {
+        try {
+            const lt = JSON.parse(localStorage.getItem('srs_lifetime'));
+            if (lt && typeof lt === 'object') return { hard: lt.hard || 0, good: lt.good || 0, easy: lt.easy || 0 };
+        } catch (e) { /* ignore */ }
+        return { hard: 0, good: 0, easy: 0 };
+    }
+
+    function isTeacherUser() {
+        return !!(sbUser && sbUser.email === TEACHER_EMAIL);
+    }
+
+    function updateNameDisplay() {
+        const name = localStorage.getItem('srs_student_name');
+        nameDisplay.textContent = name || 'not set yet';
+    }
+
+    function showNameOverlay(editing) {
+        nameInput.value = localStorage.getItem('srs_student_name') || '';
+        closeNameOverlayBtn.classList.remove('hidden');
+        nameOverlay.classList.remove('hidden');
+        setTimeout(() => nameInput.focus(), 50);
+    }
+
+    function maybeShowNameOverlay() {
+        updateNameDisplay();
+        if (!localStorage.getItem('srs_student_name')) showNameOverlay(false);
+    }
+
+    function computeProgressRow() {
+        const lt = getLifetime();
+        const nowIso = new Date().toISOString();
+        const struggling = [...deck]
+            .sort((a, b) => (a.easeFactor || 2.5) - (b.easeFactor || 2.5))
+            .slice(0, 5)
+            .map(c => ({ spanish: c.spanish, english: c.english, ease: Math.round((c.easeFactor || 2.5) * 100) / 100 }));
+        return {
+            student_uid: sbUser.id,
+            display_name: localStorage.getItem('srs_student_name'),
+            total_reviews: lt.hard + lt.good + lt.easy,
+            reviews_hard: lt.hard,
+            reviews_good: lt.good,
+            reviews_easy: lt.easy,
+            words_mastered: deck.filter(c => c.interval > 1440 && c.easeFactor >= 2.5).length,
+            words_learning: deck.filter(c => c.interval > 0 && c.interval <= 1440).length,
+            struggling_words: struggling,
+            last_active: nowIso,
+            updated_at: nowIso
+        };
+    }
+
+    async function syncProgress() {
+        if (!sb || !sbUser || !sbUser.is_anonymous) return;
+        if (!localStorage.getItem('srs_student_name')) return;
+        try {
+            await sb.from('student_progress').upsert(computeProgressRow(), { onConflict: 'student_uid' });
+        } catch (e) { /* offline or unreachable: studying continues locally */ }
+    }
+
+    window.trackGradeSync = function (grade) {
+        const lt = getLifetime();
+        if (grade === 'hard' || grade === 'good' || grade === 'easy') {
+            lt[grade]++;
+            try { localStorage.setItem('srs_lifetime', JSON.stringify(lt)); } catch (e) { /* ignore */ }
+        }
+        syncProgress();
+        renderAssignmentBanner();
+    };
+
+    async function ensureAnonymousSession() {
+        try {
+            const res = await sb.auth.signInAnonymously();
+            if (res && res.data && res.data.user) sbUser = res.data.user;
+        } catch (e) { /* offline: app keeps working locally */ }
+    }
+
+    // A reset email requested from this browser leaves a short-lived flag,
+    // so when the emailed link lands the teacher back in the app (on the
+    // viewer page, tokens out of reach) the app reopens this form with the
+    // paste-a-link box instead of the student name prompt.
+    function setResetPending() {
+        try { localStorage.setItem('srs_reset_pending', String(Date.now())); } catch (e) { /* ignore */ }
+    }
+    function clearResetPending() {
+        try { localStorage.removeItem('srs_reset_pending'); } catch (e) { /* ignore */ }
+    }
+    function resetPendingFresh() {
+        try {
+            const t = parseInt(localStorage.getItem('srs_reset_pending') || '0', 10);
+            return t > 0 && (Date.now() - t) < 2 * 60 * 60 * 1000;
+        } catch (e) { return false; }
+    }
+
+    function openTeacherModal(mode) {
+        authError.classList.add('hidden');
+        setPasswordError.classList.add('hidden');
+        resetLinkError.classList.add('hidden');
+        authInfo.classList.add('hidden');
+        nameOverlay.classList.add('hidden');
+        if (mode === 'setpassword') clearResetPending();
+        const emailInput = document.getElementById('teacher-email');
+        if (emailInput && !emailInput.value) emailInput.value = TEACHER_EMAIL;
+        if (mode === 'setpassword') {
+            teacherModalTitle.textContent = 'Set Your Password';
+            signinForm.classList.add('hidden');
+            setPasswordForm.classList.remove('hidden');
+        } else {
+            teacherModalTitle.textContent = 'Teacher Sign-In';
+            setPasswordForm.classList.add('hidden');
+            signinForm.classList.remove('hidden');
+            resetLinkHelp.classList.add('hidden');
+        }
+        teacherModal.classList.remove('hidden');
+    }
+
+    function closeTeacherModal() {
+        teacherModal.classList.add('hidden');
+        signinForm.reset();
+        setPasswordForm.reset();
+    }
+
+    function timeAgo(iso) {
+        const secs = (Date.now() - new Date(iso).getTime()) / 1000;
+        if (isNaN(secs)) return '—';
+        if (secs < 60) return 'just now';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+        return Math.floor(secs / 86400) + 'd ago';
+    }
+
+    async function loadDashboard() {
+        if (!sb || !isTeacherUser()) return;
+        dashStatus.textContent = 'Loading…';
+        try {
+            const { data, error } = await sb.from('student_progress').select('*');
+            if (error) {
+                dashStatus.textContent = 'Could not load student data. Check your connection and refresh.';
+                return;
+            }
+            dashRows = data || [];
+            renderDashboard();
+            dashStatus.textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        } catch (e) {
+            dashStatus.textContent = 'Could not load student data. Check your connection and refresh.';
+        }
+    }
+
+    function renderDashboard() {
+        if (dashRows.length === 0) {
+            dashEmpty.classList.remove('hidden');
+            dashContent.classList.add('hidden');
+            dashContent.classList.remove('flex');
+            return;
+        }
+        dashEmpty.classList.add('hidden');
+        dashContent.classList.remove('hidden');
+        dashContent.classList.add('flex');
+
+        document.getElementById('dash-stat-students').textContent = dashRows.length;
+
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        let weekReviews = 0, total = 0, goodEasy = 0;
+        dashRows.forEach(r => {
+            total += r.total_reviews || 0;
+            goodEasy += (r.reviews_good || 0) + (r.reviews_easy || 0);
+            if (new Date(r.last_active).getTime() >= weekAgo) weekReviews += r.total_reviews || 0;
+        });
+        document.getElementById('dash-stat-week').textContent = weekReviews;
+        document.getElementById('dash-stat-accuracy').textContent = total > 0 ? Math.round((goodEasy / total) * 100) + '%' : '—';
+
+        const freq = {};
+        dashRows.forEach(r => {
+            (Array.isArray(r.struggling_words) ? r.struggling_words : []).forEach(w => {
+                if (!w || !w.spanish) return;
+                if (!freq[w.spanish]) freq[w.spanish] = { spanish: w.spanish, english: w.english || '', count: 0 };
+                freq[w.spanish].count++;
+            });
+        });
+        const top = Object.values(freq).sort((a, b) => b.count - a.count).slice(0, 8);
+        const struggledEl = document.getElementById('dash-struggled');
+        if (top.length === 0) {
+            struggledEl.innerHTML = '<p class="text-sm text-slate-500 py-2">No struggling words reported yet.</p>';
+        } else {
+            struggledEl.innerHTML = top.map(w => `
+                <div class="flex items-center justify-between py-2">
+                    <span class="text-sm"><span class="font-medium text-slate-800">${esc(w.spanish)}</span> <span class="text-slate-400">${esc(w.english)}</span></span>
+                    <span class="text-xs font-semibold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">${w.count} student${w.count !== 1 ? 's' : ''}</span>
+                </div>`).join('');
+        }
+
+        const sorted = [...dashRows].sort((a, b) => {
+            let va = a[dashSort.key], vb = b[dashSort.key];
+            if (dashSort.key === 'last_active') { va = new Date(va).getTime() || 0; vb = new Date(vb).getTime() || 0; }
+            if (typeof va === 'string') return va.localeCompare(vb) * dashSort.dir;
+            return ((va || 0) - (vb || 0)) * dashSort.dir;
+        });
+        dashTbody.innerHTML = sorted.map(r => `
+            <tr>
+                <td class="py-2.5 px-4 font-medium text-slate-800">${esc(r.display_name)}</td>
+                <td class="py-2.5 px-4 text-slate-500 text-xs whitespace-nowrap">${esc(timeAgo(r.last_active))}</td>
+                <td class="py-2.5 px-4 text-right font-semibold text-slate-700">${r.total_reviews || 0}</td>
+                <td class="py-2.5 px-4 text-right text-red-600 hidden md:table-cell">${r.reviews_hard || 0}</td>
+                <td class="py-2.5 px-4 text-right text-amber-600 hidden md:table-cell">${r.reviews_good || 0}</td>
+                <td class="py-2.5 px-4 text-right text-emerald-600 hidden md:table-cell">${r.reviews_easy || 0}</td>
+                <td class="py-2.5 px-4 text-right text-slate-700">${r.words_mastered || 0}</td>
+                <td class="py-2.5 px-4 text-right text-slate-700">${r.words_learning || 0}</td>
+            </tr>`).join('');
+
+        document.querySelectorAll('.dash-sort').forEach(th => {
+            const base = th.getAttribute('data-label') || th.textContent.replace(/\s*[↑↓]\s*$/, '');
+            th.setAttribute('data-label', base);
+            th.textContent = base + (th.getAttribute('data-sort') === dashSort.key ? (dashSort.dir === 1 ? ' ↑' : ' ↓') : '');
+        });
+    }
+
+    function showDashboard() {
+        headerEl.classList.add('hidden');
+        studyMain.classList.add('hidden');
+        nameOverlay.classList.add('hidden');
+        dashboardEl.classList.remove('hidden');
+        dashboardEl.classList.add('flex');
+        renderTeacherAssignment();
+        loadDashboard();
+        if (dashTimer) clearInterval(dashTimer);
+        dashTimer = setInterval(loadDashboard, 60000);
+    }
+
+    function hideDashboard() {
+        if (dashTimer) { clearInterval(dashTimer); dashTimer = null; }
+        dashboardEl.classList.add('hidden');
+        dashboardEl.classList.remove('flex');
+        headerEl.classList.remove('hidden');
+        studyMain.classList.remove('hidden');
+    }
+
+    async function initSupabase() {
+        updateNameDisplay();
+
+        // Capture any auth-link arrival BEFORE creating the client:
+        // supabase-js strips the tokens from the URL as soon as it processes
+        // them. Standard Supabase email links (password recovery / invite)
+        // deliver the session in the URL hash (#access_token=...&type=recovery);
+        // generated links may instead carry ?token_hash=...&type=recovery in
+        // the query string. Check both, plus any error the link carried back.
+        const queryParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+        const linkType = queryParams.get('type') || hashParams.get('type');
+        const tokenHash = queryParams.get('token_hash') || queryParams.get('token');
+        const authCode = queryParams.get('code');
+        const linkError = hashParams.get('error_description') || hashParams.get('error')
+            || queryParams.get('error_description') || queryParams.get('error');
+        const isLinkArrival = linkType === 'recovery' || linkType === 'invite' || !!authCode;
+
+        if (typeof supabase === 'undefined') { if (!isLinkArrival && !linkError) maybeShowNameOverlay(); return; }
+        try {
+            // Implicit flow: email links deliver the session in the URL hash,
+            // so a reset link works when opened in a different browser than
+            // the one that requested it. The default PKCE flow requires a
+            // code verifier stored by the requesting browser, which the mail
+            // app's browser never has — every link failed the exchange.
+            sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                auth: { flowType: 'implicit' }
+            });
+        } catch (e) { if (!isLinkArrival && !linkError) maybeShowNameOverlay(); return; }
+
+        // A recovery link signs the teacher in and fires PASSWORD_RECOVERY:
+        // answer it with the set-password form, never the student name prompt.
+        try {
+            sb.auth.onAuthStateChange((event, session) => {
+                if (session && session.user) sbUser = session.user;
+                if (event === 'PASSWORD_RECOVERY' && isTeacherUser()) {
+                    nameOverlay.classList.add('hidden');
+                    openTeacherModal('setpassword');
+                }
+            });
+        } catch (e) { /* the checks below cover the same arrivals */ }
+
+        if (tokenHash && isLinkArrival) {
+            try {
+                const { data, error } = await sb.auth.verifyOtp({ token_hash: tokenHash, type: linkType });
+                if (!error && data && data.user) {
+                    sbUser = data.user;
+                    openTeacherModal('setpassword');
+                    return;
+                }
+            } catch (e) { /* fall through to normal session handling */ }
+        }
+
+        // Reset links requested before the implicit-flow fix return with a
+        // PKCE ?code=... instead of hash tokens. Exchange it explicitly so
+        // those emails still land on the set-password form.
+        if (authCode) {
+            try {
+                const { data, error } = await sb.auth.exchangeCodeForSession(authCode);
+                if (!error && data && data.user) {
+                    sbUser = data.user;
+                    if (isTeacherUser()) { openTeacherModal('setpassword'); return; }
+                }
+            } catch (e) { /* fall through to normal session handling */ }
+        }
+
+        try {
+            const { data } = await sb.auth.getSession();
+            if (data && data.session && data.session.user) {
+                sbUser = data.session.user;
+            } else {
+                await ensureAnonymousSession();
+            }
+        } catch (e) { /* offline: app keeps working locally */ }
+
+        if (linkError) {
+            openTeacherModal('signin');
+            authError.textContent = 'That email link has expired or was already used. Sign in with your password, or use "Forgot your password" below to get a fresh link.';
+            authError.classList.remove('hidden');
+            return;
+        }
+        if (isLinkArrival && isTeacherUser()) {
+            openTeacherModal('setpassword');
+            return;
+        }
+        if (isLinkArrival) {
+            openTeacherModal('signin');
+            authError.textContent = 'We could not open that email link. Sign in with your password, or use "Forgot your password" below to get a fresh link.';
+            authError.classList.remove('hidden');
+            return;
+        }
+        if (!isTeacherUser() && resetPendingFresh()) {
+            // The teacher asked for a reset link in this browser and has now
+            // landed back in the app without a password form — the emailed
+            // link opened the app but its sign-in didn't carry through.
+            // Meet them with the plain fallback steps, already opened.
+            openTeacherModal('signin');
+            authInfo.textContent = 'Almost there — the email link opened the app without the password form. Follow the 3 steps below to finish.';
+            authInfo.classList.remove('hidden');
+            showResetHelp(false);
+            return;
+        }
+        if (!isTeacherUser()) maybeShowNameOverlay();
+        syncProgress();
+    }
+
+    document.getElementById('open-teacher-btn').addEventListener('click', () => {
+        if (!sb) { openTeacherModal('signin'); return; }
+        if (isTeacherUser()) { showDashboard(); return; }
+        openTeacherModal('signin');
+    });
+    document.getElementById('close-teacher-modal-btn').addEventListener('click', closeTeacherModal);
+    document.getElementById('name-overlay-teacher-link').addEventListener('click', () => {
+        nameOverlay.classList.add('hidden');
+        if (isTeacherUser()) { showDashboard(); return; }
+        openTeacherModal('signin');
+    });
+    document.getElementById('edit-name-btn').addEventListener('click', () => showNameOverlay(true));
+    closeNameOverlayBtn.addEventListener('click', () => nameOverlay.classList.add('hidden'));
+
+    nameForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = nameInput.value.trim();
+        if (!name) return;
+        try { localStorage.setItem('srs_student_name', name); } catch (err) { /* ignore */ }
+        nameOverlay.classList.add('hidden');
+        updateNameDisplay();
+        syncProgress();
+    });
+
+    signinForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        authError.classList.add('hidden');
+        if (!sb) { authError.textContent = 'Could not reach the sign-in service. Check your connection and try again.'; authError.classList.remove('hidden'); return; }
+        const email = document.getElementById('teacher-email').value.trim();
+        const password = document.getElementById('teacher-password').value;
+        const btn = document.getElementById('teacher-signin-btn');
+        btn.disabled = true;
+        btn.textContent = 'Signing in…';
+        try {
+            const { data, error } = await sb.auth.signInWithPassword({ email, password });
+            if (error) {
+                authError.textContent = 'Sign-in failed: ' + error.message;
+                authError.classList.remove('hidden');
+                return;
+            }
+            if (!data.user || data.user.email !== TEACHER_EMAIL) {
+                try { await sb.auth.signOut(); } catch (err) { /* ignore */ }
+                sbUser = null;
+                await ensureAnonymousSession();
+                authError.textContent = 'Not authorized — this dashboard is only available to the teacher account.';
+                authError.classList.remove('hidden');
+                return;
+            }
+            sbUser = data.user;
+            clearResetPending();
+            closeTeacherModal();
+            showDashboard();
+        } catch (err) {
+            authError.textContent = 'Sign-in failed. Check your connection and try again.';
+            authError.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Sign in';
+        }
+    });
+
+    setPasswordForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setPasswordError.classList.add('hidden');
+        const password = document.getElementById('new-teacher-password').value;
+        const btn = document.getElementById('set-password-btn');
+        btn.disabled = true;
+        btn.textContent = 'Saving…';
+        try {
+            const { error } = await sb.auth.updateUser({ password });
+            if (error) {
+                setPasswordError.textContent = 'Could not set the password: ' + error.message;
+                setPasswordError.classList.remove('hidden');
+                return;
+            }
+            const { data } = await sb.auth.getUser();
+            if (data && data.user) sbUser = data.user;
+            closeTeacherModal();
+            if (isTeacherUser()) showDashboard();
+        } catch (err) {
+            setPasswordError.textContent = 'Could not set the password. Check your connection and try again.';
+            setPasswordError.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Set password & open dashboard';
+        }
+    });
+
+    document.getElementById('skip-password-btn').addEventListener('click', () => {
+        closeTeacherModal();
+        if (isTeacherUser()) showDashboard();
+    });
+
+    forgotPasswordBtn.addEventListener('click', async () => {
+        authError.classList.add('hidden');
+        authInfo.classList.add('hidden');
+        if (!sb) { authError.textContent = 'Could not reach the sign-in service. Check your connection and try again.'; authError.classList.remove('hidden'); return; }
+        const email = document.getElementById('teacher-email').value.trim() || TEACHER_EMAIL;
+        const originalText = forgotPasswordBtn.textContent;
+        forgotPasswordBtn.disabled = true;
+        forgotPasswordBtn.textContent = 'Sending…';
+        try {
+            const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appReturnUrl() });
+            if (error) {
+                authError.textContent = 'Could not send the email: ' + error.message;
+                authError.classList.remove('hidden');
+                return;
+            }
+            setResetPending();
+            authInfo.textContent = 'Email sent to ' + email + '. Open it and tap the button in the email — it brings you back here to choose your password.';
+            authInfo.classList.remove('hidden');
+        } catch (err) {
+            authError.textContent = 'Could not send the reset email. Check your connection and try again.';
+            authError.classList.remove('hidden');
+        } finally {
+            forgotPasswordBtn.disabled = false;
+            forgotPasswordBtn.textContent = originalText;
+        }
+    });
+
+    resetHelpToggle.addEventListener('click', () => {
+        if (resetLinkHelp.classList.contains('hidden')) showResetHelp(true);
+        else resetLinkHelp.classList.add('hidden');
+    });
+
+    // Fallback for when tapping the emailed link opens the app without the
+    // password form: the link itself carries everything needed. Accept the
+    // raw email link (…/auth/v1/verify?token=…&type=recovery), the address
+    // it lands on (#access_token=…&refresh_token=…), a token_hash link, or
+    // a bare token; establish the recovery session from it and open the
+    // set-password form.
+    useResetLinkBtn.addEventListener('click', async () => {
+        authError.classList.add('hidden');
+        authInfo.classList.add('hidden');
+        resetLinkError.classList.add('hidden');
+        const fail = (msg) => { resetLinkError.textContent = msg; resetLinkError.classList.remove('hidden'); };
+        if (!sb) { fail('Could not reach the sign-in service. Check your connection and try again.'); return; }
+        const raw = resetLinkInput.value.trim();
+        if (!raw) { fail('Paste the link from your reset email first.'); return; }
+
+        let search = '', hash = '';
+        try {
+            const u = new URL(raw);
+            search = u.search || '';
+            hash = u.hash || '';
+        } catch (e) {
+            const hi = raw.indexOf('#');
+            const qi = raw.indexOf('?');
+            if (hi >= 0) hash = raw.slice(hi);
+            if (qi >= 0) search = raw.slice(qi, hi >= 0 ? hi : undefined);
+        }
+        const q = new URLSearchParams(search);
+        const h = new URLSearchParams(hash.replace(/^#/, ''));
+        const accessToken = h.get('access_token') || q.get('access_token');
+        const refreshToken = h.get('refresh_token') || q.get('refresh_token');
+        const tokenHash = q.get('token_hash') || q.get('token') || h.get('token_hash');
+        const linkType = q.get('type') || h.get('type') || 'recovery';
+        const code = q.get('code');
+
+        const originalText = useResetLinkBtn.textContent;
+        useResetLinkBtn.disabled = true;
+        useResetLinkBtn.textContent = 'Opening…';
+        let user = null;
+        let errMsg = '';
+        try {
+            if (accessToken && refreshToken) {
+                const { data, error } = await sb.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+                if (error) errMsg = error.message; else user = data && data.user;
+            } else if (tokenHash) {
+                const { data, error } = await sb.auth.verifyOtp({ token_hash: tokenHash, type: linkType });
+                if (error) errMsg = error.message; else user = data && data.user;
+            } else if (code) {
+                const { data, error } = await sb.auth.exchangeCodeForSession(code);
+                if (error) errMsg = error.message; else user = data && data.user;
+            } else if (!/\s/.test(raw) && raw.length >= 20) {
+                const { data, error } = await sb.auth.verifyOtp({ token_hash: raw, type: 'recovery' });
+                if (error) errMsg = error.message; else user = data && data.user;
+            } else {
+                errMsg = 'no-token';
+            }
+        } catch (e) { errMsg = 'network'; }
+        useResetLinkBtn.disabled = false;
+        useResetLinkBtn.textContent = originalText;
+
+        if (user) {
+            sbUser = user;
+            if (isTeacherUser()) {
+                resetLinkInput.value = '';
+                openTeacherModal('setpassword');
+                return;
+            }
+            try { await sb.auth.signOut(); } catch (e) { /* ignore */ }
+            sbUser = null;
+            await ensureAnonymousSession();
+            fail('That link signed in a different account, not the teacher account. Request a fresh link with "Forgot your password?" above and paste the newest one.');
+            return;
+        }
+        if (errMsg === 'no-token') {
+            fail('That doesn\'t look like the link from the email. Press and hold the button in the email, tap Copy, and paste the whole thing here.');
+        } else if (errMsg === 'network') {
+            fail('That didn\'t go through. Check your connection and try again.');
+        } else {
+            fail('That link has expired or was already used — each one works only once. Tap the link above to get a fresh email, then paste the new link here without opening it first.');
+        }
+    });
+
+    document.getElementById('dash-refresh-btn').addEventListener('click', loadDashboard);
+    document.getElementById('dash-back-btn').addEventListener('click', hideDashboard);
+    document.getElementById('dash-signout-btn').addEventListener('click', async () => {
+        hideDashboard();
+        if (sb) {
+            try { await sb.auth.signOut(); } catch (e) { /* ignore */ }
+            sbUser = null;
+            await ensureAnonymousSession();
+            syncProgress();
+        }
+    });
+    document.querySelectorAll('.dash-sort').forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.getAttribute('data-sort');
+            if (dashSort.key === key) dashSort.dir *= -1;
+            else dashSort = { key: key, dir: key === 'display_name' ? 1 : -1 };
+            renderDashboard();
+        });
+    });
+
+    document.querySelectorAll('#name-overlay input, #teacher-modal input, #teacher-dashboard input, #teacher-dashboard textarea').forEach(inp => {
+        inp.addEventListener('keydown', (e) => e.stopPropagation());
+    });
+
+    // ---------- Assignment controls ----------
+    const assignDueInput = document.getElementById('assign-due');
+    if (assignDueInput) {
+        const t = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        assignDueInput.min = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate());
+    }
+    document.getElementById('assign-create-btn').addEventListener('click', () => {
+        const errEl = document.getElementById('assign-create-error');
+        const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove('hidden'); };
+        errEl.classList.add('hidden');
+        const title = document.getElementById('assign-title').value.trim();
+        const dueDate = assignDueInput.value;
+        if (!title) { fail('Give the assignment a title first.'); return; }
+        if (!dueDate) { fail('Pick a due date.'); return; }
+        const words = [];
+        document.getElementById('assign-words').value.split('\n').forEach(line => {
+            const parts = line.split(/\t|,/);
+            if (parts.length >= 2) {
+                const spanish = parts[0].trim(), english = parts[1].trim();
+                const context = parts.length > 2 ? parts.slice(2).join(',').trim() : '';
+                if (spanish && english) words.push({ spanish: spanish, english: english, context: context });
+            }
+        });
+        if (!words.length) { fail('Add at least one word — one per line: Spanish, English.'); return; }
+        const a = { id: 'asg-' + Date.now().toString(36), title: title, dueDate: dueDate, words: words, createdAt: Date.now() };
+        try { localStorage.setItem(TEACHER_ASSIGN_KEY, JSON.stringify(a)); } catch (e) { /* ignore */ }
+        renderTeacherAssignment();
+    });
+    const assignFileBtn = document.getElementById('assign-file-btn');
+    const assignFileInput = document.getElementById('assign-file-input');
+    const assignFileMsg = document.getElementById('assign-file-msg');
+    const assignFileMsgText = document.getElementById('assign-file-msg-text');
+    const showAssignFileMsg = (msg) => {
+        assignFileMsgText.textContent = msg;
+        assignFileMsg.classList.remove('hidden');
+        clearTimeout(showAssignFileMsg._t);
+        showAssignFileMsg._t = setTimeout(() => assignFileMsg.classList.add('hidden'), 5000);
+    };
+    assignFileBtn.addEventListener('click', () => assignFileInput.click());
+    assignFileInput.addEventListener('change', () => {
+        const file = assignFileInput.files && assignFileInput.files[0];
+        if (!file) return;
+        readWordFile(file, (text) => {
+            const words = parseWordList(text);
+            if (!words.length) {
+                showAssignFileMsg(`No words found in ${file.name}. Use one word per line: Spanish, English.`);
+                assignFileInput.value = '';
+                return;
+            }
+            const wordsEl = document.getElementById('assign-words');
+            const lineFor = w => w.spanish + ', ' + w.english + (w.context ? ', ' + w.context : '');
+            const existingKeys = {};
+            parseWordList(wordsEl.value).forEach(w => { existingKeys[assignWordKey(w.spanish)] = true; });
+            let added = 0, skipped = 0;
+            const newLines = [];
+            words.forEach(w => {
+                const key = assignWordKey(w.spanish);
+                if (existingKeys[key]) { skipped++; return; }
+                existingKeys[key] = true;
+                newLines.push(lineFor(w));
+                added++;
+            });
+            if (newLines.length) {
+                const current = wordsEl.value.replace(/\s+$/, '');
+                wordsEl.value = (current ? current + '\n' : '') + newLines.join('\n');
+            }
+            showAssignFileMsg(added > 0
+                ? `${added} word${added === 1 ? '' : 's'} added from ${file.name}.` + (skipped ? ` (${skipped} already in the list — skipped.)` : '')
+                : `No new words in ${file.name} — all ${skipped} were already in the list.`);
+            assignFileInput.value = '';
+        }, () => {
+            showAssignFileMsg(`Couldn't read ${file.name} — try again.`);
+            assignFileInput.value = '';
+        });
+    });
+    document.getElementById('assign-copy-btn').addEventListener('click', async () => {
+        const input = document.getElementById('assign-link-input');
+        const msg = document.getElementById('assign-copy-msg');
+        msg.classList.remove('hidden');
+        try {
+            await navigator.clipboard.writeText(input.value);
+            msg.textContent = 'Link copied — paste it wherever your students will see it (Classroom, email, a QR code).';
+        } catch (e) {
+            input.select();
+            msg.textContent = 'The link is selected — copy it with Ctrl/Cmd + C.';
+        }
+    });
+    document.getElementById('assign-new-btn').addEventListener('click', () => {
+        document.getElementById('assign-active-wrap').classList.add('hidden');
+        document.getElementById('assign-create-wrap').classList.remove('hidden');
+        document.getElementById('assign-create-error').classList.add('hidden');
+    });
+    document.getElementById('assign-delete-btn').addEventListener('click', () => {
+        try { localStorage.removeItem(TEACHER_ASSIGN_KEY); } catch (e) { /* ignore */ }
+        renderTeacherAssignment();
+    });
+    document.getElementById('assign-preview-btn').addEventListener('click', () => {
+        const a = getStoredAssignment(TEACHER_ASSIGN_KEY);
+        if (!a) return;
+        hideDashboard();
+        importAssignment(a);
+    });
+    document.getElementById('assign-practice-btn').addEventListener('click', practiceAssignment);
+    document.getElementById('assign-banner-dismiss').addEventListener('click', () => {
+        const a = getStoredAssignment(STUDENT_ASSIGN_KEY);
+        if (a) { try { localStorage.setItem(ASSIGN_DISMISSED_KEY, a.id); } catch (e) { /* ignore */ } }
+        assignBanner.classList.add('hidden');
+    });
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAssignments);
+    } else {
+        initAssignments();
+    }
+
+    window.addEventListener('pagehide', () => { syncProgress(); });
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSupabase);
+    } else {
+        initSupabase();
+    }
+})();
+</script>
+</body>
+</html>
